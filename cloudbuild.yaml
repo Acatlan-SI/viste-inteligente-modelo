@@ -1,11 +1,11 @@
 steps:
   # Construir la imagen Docker
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/ml-service-repo/ml-service:latest', '.']
+    args: ['build', '-t', 'northamerica-south1-docker.pkg.dev/viste-inteligente/ml-service-repo/ml-service:latest', '.']
   
   # Subir la imagen a Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/ml-service-repo/ml-service:latest']
+    args: ['push', 'northamerica-south1-docker.pkg.dev/viste-inteligente/ml-service-repo/ml-service:latest']
   
   # Desplegar en Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -14,8 +14,8 @@ steps:
       - 'run'
       - 'deploy'
       - 'ml-service'
-      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/ml-service-repo/ml-service:latest'
-      - '--region=us-central1'
+      - '--image=northamerica-south1-docker.pkg.dev/viste-inteligente/ml-service-repo/ml-service:latest'
+      - '--region=northamerica-south1'
       - '--platform=managed'
       - '--memory=1Gi'
       - '--cpu=1'
@@ -24,7 +24,7 @@ steps:
       - '--set-env-vars=GCS_BUCKET_NAME=viste-inteligente-bucket'
 
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/ml-service-repo/ml-service:latest'
+  - 'northamerica-south1-docker.pkg.dev/viste-inteligente/ml-service-repo/ml-service:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
