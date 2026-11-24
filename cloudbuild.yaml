@@ -1,0 +1,31 @@
+steps:
+  # Construir la imagen Docker
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/ml-service-repo/ml-service:latest', '.']
+    dir: 'ml-service'
+  
+  # Subir la imagen a Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/ml-service-repo/ml-service:latest']
+  
+  # Desplegar en Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'ml-service'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/ml-service-repo/ml-service:latest'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--memory=1Gi'
+      - '--cpu=1'
+      - '--port=8080'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=GCS_BUCKET_NAME=viste-inteligente-bucket'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/ml-service-repo/ml-service:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
