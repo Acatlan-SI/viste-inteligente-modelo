@@ -9,10 +9,52 @@ from app.models.schemas import (
 from app.services.image_service import ImageService
 from app.services.recommendation_service import RecommendationService
 import logging
+import os
+import joblib
+import json
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+modelo_ml = None
+metadata_modelo = None
+
+def cargar_modelo_local():
+    """Carga el modelo desde el repositorio (empacado en la imagen Docker)"""
+    global modelo_ml, metadata_modelo
+    
+    try:
+        # Ruta dentro del contenedor Docker
+        modelo_path = os.path.join(
+            os.path.dirname(__file__),
+            "models/trained/outfit_model.pkl"
+        )
+        metadata_path = os.path.join(
+            os.path.dirname(__file__),
+            "models/trained/model_metadata.json"
+        )
+        
+        # Cargar modelo
+        modelo_ml = joblib.load(modelo_path)
+        logger.info(f"✅ Modelo cargado desde: {modelo_path}")
+        
+        # Cargar metadata
+        with open(metadata_path, "r") as f:
+            metadata_modelo = json.load(f)
+        
+        logger.info(f"📊 Metadata del modelo: {metadata_modelo.get('version')}")
+        logger.info(f"   Fecha entrenamiento: {metadata_modelo.get('fecha_entrenamiento')}")
+        logger.info(f"   Precisión: {metadata_modelo.get('precision')}")
+        
+        return True
+        
+    except FileNotFoundError as e:
+        logger.error(f"❌ No se encontró el modelo: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Error cargando modelo: {e}")
+        return False
 
 # Crear aplicación FastAPI
 app = FastAPI(
@@ -35,19 +77,39 @@ app.add_middleware(
 image_service = ImageService()
 recommendation_service = RecommendationService()
 
+@app.on_event("startup")
+async def startup():
+    """Se ejecuta al iniciar el servicio"""
+    exito = cargar_modelo_local()
+    if not exito:
+        logger.warning("⚠️ Servicio iniciado sin modelo cargado")
+
 @app.get("/")
 async def root():
     """Endpoint raíz"""
     return {
         "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "status": "running"
+        "status": "running",
+        "modelo_cargado": modelo_ml is not None,
+        "modelo_version": metadata_modelo.get("version") if metadata_modelo else None
     }
 
 @app.get("/health")
 async def health_check():
     """Health check para Cloud Run"""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "modelo_disponible": modelo_ml is not None,
+        "modelo_version": metadata_modelo.get("version") if metadata_modelo else None
+    }
+
+@app.get("/info-modelo")
+async def info_modelo():
+    """Endpoint para ver información del modelo actual"""
+    if metadata_modelo is None:
+        return {"error": "Modelo no cargado"}
+    return metadata_modelo
 
 @app.post(
     f"{settings.API_V1_STR}/analyze-image",
@@ -89,6 +151,9 @@ async def get_recommendations(request: RecommendationRequest):
     - Colores preferidos
     - Items a excluir
     """
+    if modelo_ml is None:
+        raise HTTPException(status_code=503, detail="Modelo ML no disponible")
+    
     try:
         result = await recommendation_service.get_recommendations(request)
         return result
