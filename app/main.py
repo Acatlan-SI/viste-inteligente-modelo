@@ -28,7 +28,7 @@ def cargar_modelo_local():
         # Ruta dentro del contenedor Docker
         modelo_path = os.path.join(
             os.path.dirname(__file__),
-            "models/trained/outfit_model.pkl"
+            "models/trained/outfit_model.joblib"
         )
         metadata_path = os.path.join(
             os.path.dirname(__file__),
