@@ -10,11 +10,11 @@ import onnxruntime as ort
 from model.color_kmeans import color_dominante, describir_color
 
 # Configuración CNN
-MODELO_ONNX_PATH = "models/mobilenetv2-12.onnx"
+# Asegúrate de que este archivo exista en tu carpeta 'models' o 'modelos'
+MODELO_ONNX_PATH = "models/mobilenetv2-12.onnx"  
 _MEDIA = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _DESV = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-# Sesión ONNX global para no recargarla en cada request
 _sesion_cnn = None
 
 def _obtener_sesion_cnn():
@@ -23,7 +23,7 @@ def _obtener_sesion_cnn():
         try:
             _sesion_cnn = ort.InferenceSession(MODELO_ONNX_PATH, providers=["CPUExecutionProvider"])
         except Exception as e:
-            raise RuntimeError(f"No se pudo cargar el modelo ONNX: {e}")
+            raise RuntimeError(f"No se pudo cargar el modelo ONNX en {MODELO_ONNX_PATH}: {e}")
     return _sesion_cnn
 
 def _preparar_imagen_cnn(img):
@@ -40,17 +40,116 @@ def _preparar_imagen_cnn(img):
 
 def obtener_vector_cnn(imagen_input):
     """Devuelve el vector de 1000 características de la CNN."""
-    img = abrir(imagen_input) # Usamos la función 'abrir' ya definida
+    img = abrir(imagen_input)
     sesion = _obtener_sesion_cnn()
     nombre_entrada = sesion.get_inputs()[0].name
     salida = sesion.run(None, {nombre_entrada: _preparar_imagen_cnn(img)})[0]
     return np.asarray(salida, dtype=np.float32).reshape(-1)[:1000]
 
-# ... (Mantener las funciones _histograma_hsv, _forma y extraer igual que antes) ...
 
-def extraer_features_array(imagen_input):
+def abrir(imagen_input):
+    """Abre una imagen desde bytes, ruta o objeto PIL."""
+    if isinstance(imagen_input, Image.Image):
+        img = imagen_input
+    elif isinstance(imagen_input, bytes):
+        from io import BytesIO
+        img = Image.open(BytesIO(imagen_input))
+    else:
+        img = Image.open(imagen_input)
+    
+    img = ImageOps.exif_transpose(img)
+    return img.convert("RGB")
+
+
+def _histograma_hsv(img):
+    """Histogramas normalizados de tono, saturación y brillo del centro de la foto."""
+    BINS_H, BINS_S, BINS_V = 12, 4, 4
+    w, h = img.size
+    centro = img.crop((int(w * .15), int(h * .15), int(w * .85), int(h * .85)))
+    hsv = np.asarray(centro.convert("HSV")).reshape(-1, 3).astype(float)
+    hh = np.histogram(hsv[:, 0], bins=BINS_H, range=(0, 256))[0]
+    ss = np.histogram(hsv[:, 1], bins=BINS_S, range=(0, 256))[0]
+    vv = np.histogram(hsv[:, 2], bins=BINS_V, range=(0, 256))[0]
+    n = len(hsv)
+    return np.concatenate([hh, ss, vv]) / n
+
+
+def _forma(img):
+    """Descriptor de forma simplificado (tipo HOG)."""
+    CELDAS, BINS_ORIENT = 2, 9
+    gris = np.asarray(img.convert("L").resize((64, 64)), dtype=float) / 255
+    gy, gx = np.gradient(gris)
+    magnitud = np.hypot(gx, gy)
+    angulo = (np.degrees(np.arctan2(gy, gx)) + 180) % 180
+    tam = 64 // CELDAS
+    desc = []
+    for i in range(CELDAS):
+        for j in range(CELDAS):
+            m = magnitud[i * tam:(i + 1) * tam, j * tam:(j + 1) * tam].ravel()
+            a = angulo[i * tam:(i + 1) * tam, j * tam:(j + 1) * tam].ravel()
+            hist = np.histogram(a, bins=BINS_ORIENT, range=(0, 180), weights=m)[0]
+            desc.append(hist / (np.linalg.norm(hist) + 1e-6))
+    densidad = float((magnitud > 0.1).mean())
+    return np.concatenate(desc), densidad
+
+
+def extraer(imagen_input):
     """
-    Extrae el vector completo de 1067 características (CNN + Manual).
+    Extrae todas las características manuales de una imagen.
+    Returns: dict con características + metadatos de color
+    """
+    img = abrir(imagen_input)
+    proporcion = img.height / img.width
+    img.thumbnail((256, 256))
+
+    rgb, _ = color_dominante(img, k=4)
+    c = describir_color(rgb)
+    rad = np.radians(c["tono"])
+
+    BINS_H, BINS_S, BINS_V = 12, 4, 4
+    CELDAS, BINS_ORIENT = 2, 9
+    COLUMNAS_MODELO = (
+        ["dom_r", "dom_g", "dom_b", "dom_tono_sin", "dom_tono_cos", "dom_saturacion",
+         "dom_brillo", "es_neutro", "es_fuerte"]
+        + [f"hist_h{i}" for i in range(BINS_H)]
+        + [f"hist_s{i}" for i in range(BINS_S)]
+        + [f"hist_v{i}" for i in range(BINS_V)]
+        + [f"forma_{i}" for i in range(CELDAS * CELDAS * BINS_ORIENT)]
+        + ["proporcion", "densidad_bordes"]
+    )
+
+    fila = {
+        "dom_r": rgb[0], "dom_g": rgb[1], "dom_b": rgb[2],
+        "dom_tono_sin": float(np.sin(rad)), "dom_tono_cos": float(np.cos(rad)),
+        "dom_saturacion": c["saturacion"], "dom_brillo": c["brillo"],
+        "es_neutro": int(c["neutro"]), "es_fuerte": int(c["fuerte"]),
+    }
+    
+    for nombre, valor in zip(COLUMNAS_MODELO[9:9 + 20], _histograma_hsv(img)):
+        fila[nombre] = float(valor)
+    
+    forma, densidad = _forma(img)
+    for i, valor in enumerate(forma):
+        fila[f"forma_{i}"] = float(valor)
+    
+    fila["proporcion"] = proporcion
+    fila["densidad_bordes"] = densidad
+    fila["color_nombre"] = c["nombre"]
+    fila["dom_tono"] = c["tono"]
+    
+    return fila
+
+
+def extraer_features_array(imagen_input, input_type="CNN (1000)"):
+    """
+    Extrae el vector de características según el tipo de entrada del modelo.
+    
+    Args:
+        imagen_input: bytes, str o PIL.Image
+        input_type: "Manual (67)", "CNN (1000)" o "CNN + manual (1067)"
+        
+    Returns:
+        numpy array con las features en el formato correcto
     """
     # 1. Features Manuales (67)
     features_dict = extraer(imagen_input)
@@ -73,5 +172,20 @@ def extraer_features_array(imagen_input):
     # 2. Features CNN (1000)
     cnn_array = obtener_vector_cnn(imagen_input)
     
-    # 3. Concatenar (1067 total)
-    return np.hstack([cnn_array, manual_array]).reshape(1, -1)
+    # 3. Devolver según el tipo de entrada que espera el modelo
+    if input_type == "Manual (67)":
+        return manual_array.reshape(1, -1)
+    elif input_type == "CNN (1000)":
+        return cnn_array.reshape(1, -1)
+    elif input_type == "CNN + manual (1067)":
+        return np.hstack([cnn_array, manual_array]).reshape(1, -1)
+    else:
+        # Fallback por defecto: CNN (1000)
+        return cnn_array.reshape(1, -1)
+
+
+def get_onehot_tipo(tipo_idx, num_clases=5):
+    """Genera one-hot encoding para el tipo de prenda."""
+    onehot = np.zeros((1, num_clases))
+    onehot[0, int(tipo_idx)] = 1
+    return onehot

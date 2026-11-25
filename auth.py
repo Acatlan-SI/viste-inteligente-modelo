@@ -55,22 +55,20 @@ async def verify_firebase_token(request: Request, credentials: HTTPAuthorization
     """
     Middleware/Dependencia para verificar el ID Token de Firebase.
     
-    El frontend debe enviar el token en el header:
-    Authorization: Bearer <firebase_id_token>
-    
-    Args:
-        request: FastAPI request object
-        credentials: Token extraído del header Authorization
-        
-    Returns:
-        dict con información del usuario verificado
-        
-    Raises:
-        HTTPException 401 si el token es inválido o falta
+    En desarrollo local (sin credenciales de Firebase), permite acceso sin token.
+    En producción (Cloud Run), valida el token obligatoriamente.
     """
     # Endpoint /health no requiere autenticación
     if request.url.path == "/health":
         return None
+    
+    # Modo local: si no hay service account de Firebase configurada, permitimos acceso de prueba
+    firebase_service_account = os.getenv("FIREBASE_SERVICE_ACCOUNT")
+    is_local_mode = not firebase_service_account or not os.path.exists(firebase_service_account)
+    
+    if is_local_mode and not credentials:
+        logger.warning("⚠️ Modo local detectado: acceso sin autenticación (solo para desarrollo)")
+        return {"uid": "local_test_user", "email": "test@local.com"}
     
     # Verificar que se proporcionó un token
     if not credentials:

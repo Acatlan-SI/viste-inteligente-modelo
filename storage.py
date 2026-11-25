@@ -41,15 +41,18 @@ class CloudStorageManager:
             return
         
         try:
-            # En GCP (Cloud Run), usa las credenciales del service account automáticamente
+            # En GCP (Cloud Run), usa las credenciales del service account automáticamente.
+            # En local, buscará la variable de entorno GOOGLE_APPLICATION_CREDENTIALS.
             self.client = storage.Client()
             self.bucket = self.client.bucket(self.bucket_name)
             self._initialized = True
             logger.info(f"✅ Conectado a bucket: {self.bucket_name}")
             
         except Exception as e:
-            logger.error(f"❌ Error al conectar con Cloud Storage: {str(e)}")
-            raise RuntimeError(f"No se pudo conectar a Cloud Storage: {str(e)}")
+            # ⚠️ CAMBIO CLAVE: En lugar de lanzar un error fatal, solo advertimos.
+            logger.warning(f"⚠️ No se pudo conectar a Cloud Storage (normal en local sin credenciales): {str(e)}")
+            logger.warning("⚠️ El endpoint /recommend no funcionará hasta que se configuren las credenciales de GCP.")
+            self._initialized = False
     
     def _ensure_initialized(self):
         """Asegura que el cliente esté inicializado."""

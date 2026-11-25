@@ -1,0 +1,21 @@
+steps:
+  # Build de la imagen Docker
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'northamerica-south1-docker.pkg.dev/viste-inteligente/viste-inteligente-repo/ml-service:$SHORT_SHA', '.']
+  
+  # Push a Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'northamerica-south1-docker.pkg.dev/viste-inteligente/viste-inteligente-repo/ml-service:$SHORT_SHA']
+  
+  # Tag como latest
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['tag', 'northamerica-south1-docker.pkg.dev/viste-inteligente/viste-inteligente-repo/ml-service:$SHORT_SHA', 'northamerica-south1-docker.pkg.dev/viste-inteligente/viste-inteligente-repo/ml-service:latest']
+  
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'northamerica-south1-docker.pkg.dev/viste-inteligente/viste-inteligente-repo/ml-service:latest']
+
+images:
+  - 'northamerica-south1-docker.pkg.dev/viste-inteligente/viste-inteligente-repo/ml-service:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
