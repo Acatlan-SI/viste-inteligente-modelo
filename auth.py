@@ -55,70 +55,81 @@ async def verify_firebase_token(request: Request, credentials: HTTPAuthorization
     """
     Middleware/Dependencia para verificar el ID Token de Firebase.
     
-    En desarrollo local (sin credenciales de Firebase), permite acceso sin token.
-    En producción (Cloud Run), valida el token obligatoriamente.
+    En desarrollo local (ENVIRONMENT != "production"), permite acceso sin token.
+    En producción (Cloud Run con ENVIRONMENT=production), valida el token obligatoriamente.
     """
     # Endpoint /health no requiere autenticación
     if request.url.path == "/health":
         return None
     
-    # Modo local: si no hay service account de Firebase configurada, permitimos acceso de prueba
-    firebase_service_account = os.getenv("FIREBASE_SERVICE_ACCOUNT")
-    is_local_mode = not firebase_service_account or not os.path.exists(firebase_service_account)
+    # Detectar entorno
+    environment = os.getenv("ENVIRONMENT", "development")
+    is_production = environment.lower() == "production"
     
-    if is_local_mode and not credentials:
-        logger.warning("⚠️ Modo local detectado: acceso sin autenticación (solo para desarrollo)")
-        return {"uid": "local_test_user", "email": "test@local.com"}
-    
-    # Verificar que se proporcionó un token
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token de autenticación no proporcionado",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    token = credentials.credentials
-    
-    try:
-        # Verificar el token con Firebase
-        decoded_token = auth.verify_id_token(token)
+    # En producción, SIEMPRE exigir autenticación
+    if is_production:
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token de autenticación requerido en producción",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         
-        # Extraer información relevante
-        user_info = {
-            "uid": decoded_token.get("uid"),
-            "email": decoded_token.get("email"),
-            "email_verified": decoded_token.get("email_verified", False),
-        }
+        token = credentials.credentials
         
-        logger.debug(f"Usuario autenticado: {user_info['uid']}")
-        return user_info
+        try:
+            decoded_token = auth.verify_id_token(token)
+            user_info = {
+                "uid": decoded_token.get("uid"),
+                "email": decoded_token.get("email"),
+                "email_verified": decoded_token.get("email_verified", False),
+            }
+            logger.info(f"✅ Usuario autenticado en producción: {user_info['uid']}")
+            return user_info
+            
+        except auth.ExpiredIdTokenError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="El token ha expirado",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        except auth.RevokedIdTokenError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="El token ha sido revocado",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        except auth.InvalidIdTokenError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token inválido",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        except Exception as e:
+            logger.error(f"Error al verificar token Firebase: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Error de autenticación: {str(e)}",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    
+    # En desarrollo local, permitir acceso sin token (solo para pruebas)
+    else:
+        if not credentials:
+            logger.warning("⚠️ Modo desarrollo: acceso sin autenticación (NO usar en producción)")
+            return {"uid": "local_test_user", "email": "test@local.com"}
         
-    except auth.ExpiredIdTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="El token ha expirado. Por favor, inicia sesión nuevamente.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except auth.RevokedIdTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="El token ha sido revocado. Por favor, inicia sesión nuevamente.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except auth.InvalidIdTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token de autenticación inválido.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except Exception as e:
-        logger.error(f"Error al verificar token Firebase: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Error de autenticación: {str(e)}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        # Si hay token en desarrollo, intentar verificarlo (opcional)
+        token = credentials.credentials
+        try:
+            decoded_token = auth.verify_id_token(token)
+            return {
+                "uid": decoded_token.get("uid"),
+                "email": decoded_token.get("email"),
+            }
+        except Exception as e:
+            logger.warning(f"Token inválido en modo desarrollo, usando mock: {str(e)}")
+            return {"uid": "local_test_user", "email": "test@local.com"}
 
 
 def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = None):
