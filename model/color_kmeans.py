@@ -22,7 +22,6 @@ def kmeans(datos, k=4, max_iter=50, tol=1e-3, semilla=0):
     datos = datos.astype(np.float64)
     n = len(datos)
 
-    # Inicialización k-means++
     centroides = [datos[rng.integers(n)]]
     for _ in range(1, k):
         d2 = np.min(((datos[:, None, :] - np.array(centroides)[None]) ** 2).sum(-1), axis=1)
@@ -31,17 +30,14 @@ def kmeans(datos, k=4, max_iter=50, tol=1e-3, semilla=0):
     centroides = np.array(centroides)
 
     for _ in range(max_iter):
-        # Asignación
         distancias = ((datos[:, None, :] - centroides[None]) ** 2).sum(-1)
         etiquetas = distancias.argmin(axis=1)
 
-        # Actualización
         nuevos = np.array([
             datos[etiquetas == j].mean(axis=0) if np.any(etiquetas == j) else centroides[j]
             for j in range(k)
         ])
 
-        # Convergencia
         movimiento = np.abs(nuevos - centroides).max()
         centroides = nuevos
         if movimiento < tol:
@@ -92,7 +88,6 @@ def color_dominante(imagen, k=4):
         if dist_fondo[j] > 40:
             return tuple(int(c) for c in centroides[j]), paleta
     
-    # Si todo se parece al fondo
     j = orden[0]
     return tuple(int(c) for c in centroides[j]), paleta
 

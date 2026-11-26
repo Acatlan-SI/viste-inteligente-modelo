@@ -9,8 +9,6 @@ from PIL import Image, ImageOps
 import onnxruntime as ort
 from model.color_kmeans import color_dominante, describir_color
 
-# Configuración CNN
-# Asegúrate de que este archivo exista en tu carpeta 'models' o 'modelos'
 MODELO_ONNX_PATH = "models/mobilenetv2-12.onnx"  
 _MEDIA = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _DESV = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -18,6 +16,7 @@ _DESV = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _sesion_cnn = None
 
 def _obtener_sesion_cnn():
+    """Carga y reutiliza la sesión ONNX de MobileNetV2."""
     global _sesion_cnn
     if _sesion_cnn is None:
         try:
@@ -36,7 +35,7 @@ def _preparar_imagen_cnn(img):
     img_crop = img_resized.crop((izq, arr, izq + 224, arr + 224))
     
     x = (np.asarray(img_crop, dtype=np.float32) / 255.0 - _MEDIA) / _DESV
-    return x.transpose(2, 0, 1)[None] # Formato (1, 3, 224, 224)
+    return x.transpose(2, 0, 1)[None]
 
 def obtener_vector_cnn(imagen_input):
     """Devuelve el vector de 1000 características de la CNN."""
@@ -151,7 +150,6 @@ def extraer_features_array(imagen_input, input_type="CNN (1000)"):
     Returns:
         numpy array con las features en el formato correcto
     """
-    # 1. Features Manuales (67)
     features_dict = extraer(imagen_input)
     
     BINS_H, BINS_S, BINS_V = 12, 4, 4
@@ -169,10 +167,8 @@ def extraer_features_array(imagen_input, input_type="CNN (1000)"):
     manual_list = [features_dict[col] for col in COLUMNAS_MODELO]
     manual_array = np.array(manual_list, dtype=np.float32)
     
-    # 2. Features CNN (1000)
     cnn_array = obtener_vector_cnn(imagen_input)
     
-    # 3. Devolver según el tipo de entrada que espera el modelo
     if input_type == "Manual (67)":
         return manual_array.reshape(1, -1)
     elif input_type == "CNN (1000)":
@@ -180,7 +176,6 @@ def extraer_features_array(imagen_input, input_type="CNN (1000)"):
     elif input_type == "CNN + manual (1067)":
         return np.hstack([cnn_array, manual_array]).reshape(1, -1)
     else:
-        # Fallback por defecto: CNN (1000)
         return cnn_array.reshape(1, -1)
 
 

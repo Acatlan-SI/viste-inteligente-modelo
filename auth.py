@@ -18,7 +18,6 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 logger = logging.getLogger(__name__)
 
-# Esquema de autenticación Bearer
 security = HTTPBearer(auto_error=False)
 
 
@@ -29,22 +28,18 @@ def get_firebase_app():
     Se usa lru_cache para inicializar solo una vez.
     """
     try:
-        # Opción 1: Usar credenciales desde archivo JSON (desarrollo local)
         service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT")
         if service_account_path and os.path.exists(service_account_path):
             logger.info(f"Cargando credenciales Firebase desde: {service_account_path}")
             cred = credentials.Certificate(service_account_path)
             firebase_admin.initialize_app(cred)
         else:
-            # Opción 2: Usar Application Default Credentials (producción en GCP)
-            # En Cloud Run con Workload Identity o service account adjunto
             logger.info("Usando Application Default Credentials para Firebase")
             firebase_admin.initialize_app()
         
         return firebase_admin.get_app()
         
     except ValueError:
-        # Ya está inicializada
         return firebase_admin.get_app()
     except Exception as e:
         logger.error(f"Error al inicializar Firebase Admin: {str(e)}")
@@ -58,15 +53,12 @@ async def verify_firebase_token(request: Request, credentials: HTTPAuthorization
     En desarrollo local (ENVIRONMENT != "production"), permite acceso sin token.
     En producción (Cloud Run con ENVIRONMENT=production), valida el token obligatoriamente.
     """
-    # Endpoint /health no requiere autenticación
     if request.url.path == "/health":
         return None
     
-    # Detectar entorno
     environment = os.getenv("ENVIRONMENT", "development")
     is_production = environment.lower() == "production"
     
-    # En producción, SIEMPRE exigir autenticación
     if is_production:
         if not credentials:
             raise HTTPException(
@@ -113,13 +105,11 @@ async def verify_firebase_token(request: Request, credentials: HTTPAuthorization
                 headers={"WWW-Authenticate": "Bearer"},
             )
     
-    # En desarrollo local, permitir acceso sin token (solo para pruebas)
     else:
         if not credentials:
             logger.warning("⚠️ Modo desarrollo: acceso sin autenticación (NO usar en producción)")
             return {"uid": "local_test_user", "email": "test@local.com"}
         
-        # Si hay token en desarrollo, intentar verificarlo (opcional)
         token = credentials.credentials
         try:
             decoded_token = auth.verify_id_token(token)
@@ -133,11 +123,5 @@ async def verify_firebase_token(request: Request, credentials: HTTPAuthorization
 
 
 def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = None):
-    """
-    Dependencia de FastAPI para obtener el usuario actual.
-    Usa verify_firebase_token internamente.
-    """
-    # Nota: Esta función se usará como dependencia en los endpoints
-    # pero necesita ser async para funcionar con verify_firebase_token
-    # Se implementará correctamente en main.py
+    """Marcador sin implementación; no se usa en los endpoints actuales."""
     pass

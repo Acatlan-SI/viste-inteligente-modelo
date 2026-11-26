@@ -21,7 +21,6 @@ from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 
-# Configuración
 BUCKET_NAME = os.getenv("GCS_BUCKET", "viste-inteligente-bucket")
 URL_EXPIRATION_MINUTES = int(os.getenv("URL_EXPIRATION_MINUTES", "60"))
 
@@ -41,17 +40,14 @@ class CloudStorageManager:
             return
         
         try:
-            # En GCP (Cloud Run), usa las credenciales del service account automáticamente.
-            # En local, buscará la variable de entorno GOOGLE_APPLICATION_CREDENTIALS.
             self.client = storage.Client()
             self.bucket = self.client.bucket(self.bucket_name)
             self._initialized = True
             logger.info(f"✅ Conectado a bucket: {self.bucket_name}")
             
         except Exception as e:
-            # ⚠️ CAMBIO CLAVE: En lugar de lanzar un error fatal, solo advertimos.
             logger.warning(f"⚠️ No se pudo conectar a Cloud Storage (normal en local sin credenciales): {str(e)}")
-            logger.warning("⚠️ El endpoint /recommend no funcionará hasta que se configuren las credenciales de GCP.")
+            logger.warning("⚠️ /recommend no podrá consultar el clóset de GCS hasta que se configuren las credenciales de GCP.")
             self._initialized = False
     
     def _ensure_initialized(self):
@@ -75,7 +71,6 @@ class CloudStorageManager:
             prendas = []
             prefix = f"users/{user_id}/metadata/"
             
-            # Listar todos los archivos de metadata del usuario
             blobs = self.bucket.list_blobs(prefix=prefix)
             
             for blob in blobs:
@@ -83,11 +78,9 @@ class CloudStorageManager:
                     continue
                 
                 try:
-                    # Descargar y parsear el metadata
                     content = blob.download_as_text()
                     metadata = json.loads(content)
                     
-                    # Agregar URL firmada de la imagen
                     image_blob_name = blob.name.replace('metadata/', 'images/')
                     image_url = self.generate_signed_url(image_blob_name)
                     
@@ -136,7 +129,6 @@ class CloudStorageManager:
             
         except Exception as e:
             logger.error(f"Error al generar URL firmada para {blob_name}: {str(e)}")
-            # Retornar URL placeholder en caso de error
             return f"https://storage.googleapis.com/{self.bucket_name}/{blob_name}"
     
     def get_image_bytes(self, user_id: str, prenda_id: str) -> Optional[bytes]:
@@ -195,5 +187,4 @@ class CloudStorageManager:
             return None
 
 
-# Instancia singleton para reutilizar
 storage_manager = CloudStorageManager()

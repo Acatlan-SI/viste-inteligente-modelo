@@ -111,7 +111,7 @@ def colorimetria(prendas, ocasion):
             pts += 1
             razones.append("deportivo: un color vivo da energía (+1)")
             
-    elif occasion == "fiesta":
+    elif ocasion == "fiesta":
         if any(c["fuerte"] or c["nombre"].startswith(("negro", "vino")) for c in colores):
             pts += 2
             razones.append("fiesta: una pieza llamativa o negro/vino (+2)")
@@ -137,7 +137,7 @@ def calificar_outfit(arriba, abajo, calzado=None, ocasion=None):
     """
     ca, cb = color_de(arriba), color_de(abajo)
     puntos, razones = calificar_par(ca, cb)
-    puntos *= 2  # arriba+abajo es la combinación más importante
+    puntos *= 2
 
     contraste = abs(ca["brillo"] - cb["brillo"])
     if contraste >= 0.35:
@@ -240,7 +240,6 @@ def recomendar(prendas, ocasion=None, top=5):
     calzados = por_tipo["calzado"] or [None]
     resultados = []
     
-    # Combinaciones: superior + inferior + calzado
     for a, b, c in product(por_tipo["superior"], por_tipo["inferior"], calzados):
         calif, razones = calificar_outfit(a, b, c, ocasion)
         resultados.append({
@@ -249,7 +248,6 @@ def recomendar(prendas, ocasion=None, top=5):
             "razones": razones
         })
     
-    # Combinaciones: completo + calzado
     for v, c in product(por_tipo["completo"], por_tipo["calzado"]):
         calif, razones = calificar_completo(v, c, ocasion)
         resultados.append({

@@ -13,6 +13,9 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from PIL import Image
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from auth import verify_firebase_token, security
 from model.loader import ModelLoader
@@ -21,23 +24,19 @@ from model.reglas import recomendar
 from storage import storage_manager
 
 from pydantic import BaseModel
-from typing import List, Optional
 
-# Configuración de logging estructurado
 logging.basicConfig(
     level=logging.INFO,
     format='{"timestamp": "%(asctime)s", "level": "%(levelname)s", "message": "%(message)s", "module": "%(module)s"}'
 )
 logger = logging.getLogger(__name__)
 
-# Inicializar aplicación FastAPI
 app = FastAPI(
     title="Viste Inteligente - ML Service",
     description="Servicio de clasificación y recomendación de outfits",
     version="1.0.0"
 )
 
-# Cargar modelo al inicio
 model_loader = ModelLoader()
 
 
@@ -49,7 +48,6 @@ async def startup_event():
         model_loader.load()
         logger.info(f"✅ Modelo cargado: {model_loader.get_info()}")
         
-        # Inicializar Cloud Storage (fallará silenciosamente en local si no hay credenciales)
         storage_manager.initialize()
         if storage_manager._initialized:
             logger.info("✅ Cloud Storage conectado")
@@ -87,11 +85,9 @@ async def classify_image(
 ):
     """Clasifica una imagen y devuelve sus características."""
     
-    # 1. Autenticación (con bypass para modo local)
     user_info = await verify_firebase_token(request, credentials)
     
     try:
-        # 2. Validar archivo
         if not file.content_type or not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
         
@@ -103,15 +99,12 @@ async def classify_image(
         
         logger.info(f"Clasificando imagen: {file.filename}, tamaño: {len(contents)} bytes")
         
-        # 3. Extraer features (1067 dimensiones: 1000 CNN + 67 manuales)
         input_type = model_loader.model_data.get('entrada', 'CNN (1000)')
         features_array = extraer_features_array(contents, input_type=input_type)
-        features_dict = extraer(contents) # Para metadatos de color
+        features_dict = extraer(contents)
         
-        # 4. Predecir TIPO
         tipo_nombre = str(model_loader.predict_tipo(features_array)[0])
 
-        # Para el modelo de ocasiones, necesitamos el índice de la clase
         CLASES_TIPO = ["superior", "inferior", "completo", "calzado", "otro"]
         try:
             tipo_idx_pred = CLASES_TIPO.index(tipo_nombre)
@@ -119,11 +112,9 @@ async def classify_image(
             logger.warning(f"Tipo '{tipo_nombre}' no encontrado en CLASES_TIPO, usando 0")
             tipo_idx_pred = 0
         
-        # 5. Predecir OCASIONES (si el modelo lo tiene)
-        ocasiones_predichas = ["casual"] # Default
+        ocasiones_predichas = ["casual"]
         if 'ocasion' in model_loader.model_data and model_loader.model_data['ocasion'] is not None:
             try:
-                # El modelo de ocasión espera: Features (1067) + OneHot del Tipo (5) = 1072
                 onehot_tipo = get_onehot_tipo(tipo_idx_pred)
                 input_ocasion = np.hstack([features_array, onehot_tipo])
                 
@@ -145,14 +136,12 @@ async def classify_image(
             except Exception as e:
                 logger.warning(f"Error al predecir ocasiones, usando default: {str(e)}")
 
-        # 6. Heurísticas para patrón y mezclilla
         densidad = features_dict.get("densidad_bordes", 0)
         patron = "otro estampado" if densidad > 0.3 else "liso"
         
         color_nombre = features_dict["color_nombre"].lower()
         mezclilla = color_nombre in ["azul", "azul marino", "celeste"] and densidad > 0.15
         
-        # 7. Construir respuesta
         result = {
             "tipo": tipo_nombre,
             "color": color_nombre,
@@ -180,7 +169,6 @@ async def classify_image(
         raise HTTPException(status_code=500, detail=f"Error al clasificar imagen: {str(e)}")
 
 
-# --- MODELO PYDANTIC PARA EL REQUEST ---
 class ColorData(BaseModel):
     nombre: str
     tono: Optional[float] = 0.0
@@ -207,22 +195,19 @@ class RecommendRequest(BaseModel):
     prendas_extra: Optional[List[PrendaExtra]] = []
 
 
-# --- ENDPOINT ACTUALIZADO ---
 @app.post("/recommend")
 async def recommend_outfits(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    payload: RecommendRequest = None,  # ← AQUÍ ESTÁ LA CLAVE: recibimos el JSON como un objeto
+    payload: RecommendRequest = None,
 ):
     """Recomienda outfits basados en el closet del usuario y filtros."""
     
-    # Si no se envió payload (por compatibilidad con query params antiguos), usar defaults
     if payload is None:
         payload = RecommendRequest(user_id="unknown")
 
     user_info = await verify_firebase_token(request, credentials)
     
-    # Usar el UID del token si no se proporcionó o no coincide (seguridad)
     user_id = payload.user_id or user_info.get("uid", "local_test_user")
     
     if payload.top < 1 or payload.top > 20:
@@ -236,7 +221,6 @@ async def recommend_outfits(
         logger.info(f"Generando recomendaciones para usuario {user_id}, ocasión: {payload.ocasion}")
         prendas = []
         
-        # 1. Cargar desde Cloud Storage si se solicita
         if payload.incluir_closet:
             try:
                 prendas_closet = storage_manager.get_user_closet(user_id)
@@ -244,7 +228,6 @@ async def recommend_outfits(
             except Exception as e:
                 logger.warning(f"No se pudo cargar el closet (¿modo local o sin permisos?): {str(e)}")
         
-        # 2. Agregar prendas extra enviadas por el frontend
         if payload.prendas_extra:
             for p in payload.prendas_extra:
                 prenda_completa = {
@@ -261,22 +244,18 @@ async def recommend_outfits(
         if not prendas:
             raise HTTPException(status_code=404, detail="No hay prendas disponibles. Agrega prendas a tu clóset o sube fotos.")
         
-        # 3. Filtrar por color si se especificó
         if payload.color:
             prendas = [
                 p for p in prendas 
                 if p.get("color", {}).get("nombre", "").lower() == payload.color.lower()
             ]
         
-        # 4. Generar recomendaciones
         resultados = recomendar(prendas, ocasion=payload.ocasion, top=payload.top)
         
-        # 5. Formatear respuesta (manteniendo estructura completa)
         outfits = []
         for resultado in resultados:
             piezas_formateadas = []
             for pieza in resultado["piezas"]:
-                # Color: siempre como diccionario para consistencia
                 color_data = pieza.get("color", {})
                 if isinstance(color_data, dict):
                     color_dict = {
@@ -288,14 +267,13 @@ async def recommend_outfits(
                         "fuerte": color_data.get("fuerte", False),
                     }
                 else:
-                    # Si por alguna razón viene como string, convertirlo
                     color_dict = {"nombre": str(color_data)}
                 
                 pieza_fmt = {
                     "tipo": pieza.get("tipo", "desconocido"),
-                    "color": color_dict,  # ✅ Siempre diccionario
+                    "color": color_dict,
                     "nombre": pieza.get("nombre", "Prenda"),
-                    "imagen_url": pieza.get("imagen_url", ""),  # URL firmada de GCS
+                    "imagen_url": pieza.get("imagen_url", ""),
                 }
                 piezas_formateadas.append(pieza_fmt)
             

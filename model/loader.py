@@ -28,7 +28,6 @@ class ModelLoader:
             self.model_data = joblib.load(self.model_path)
             self._loaded = True
             
-            # Validar estructura esperada
             if not isinstance(self.model_data, dict):
                 raise ValueError("El modelo cargado no es un diccionario como se esperaba.")
             
