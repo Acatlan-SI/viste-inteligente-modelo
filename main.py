@@ -20,6 +20,9 @@ from model.caracteristicas import extraer, extraer_features_array, get_onehot_ti
 from model.reglas import recomendar
 from storage import storage_manager
 
+from pydantic import BaseModel
+from typing import List, Optional
+
 # Configuración de logging estructurado
 logging.basicConfig(
     level=logging.INFO,
@@ -177,73 +180,122 @@ async def classify_image(
         raise HTTPException(status_code=500, detail=f"Error al clasificar imagen: {str(e)}")
 
 
+# --- MODELO PYDANTIC PARA EL REQUEST ---
+class ColorData(BaseModel):
+    nombre: str
+    tono: Optional[float] = 0.0
+    saturacion: Optional[float] = 0.5
+    brillo: Optional[float] = 0.5
+    neutro: Optional[bool] = False
+    fuerte: Optional[bool] = False
+
+class PrendaExtra(BaseModel):
+    tipo: str
+    color: ColorData
+    patron: Optional[str] = "liso"
+    mezclilla: Optional[bool] = False
+    ocasiones: Optional[List[str]] = ["casual"]
+    nombre: Optional[str] = "Prenda"
+    imagen_url: Optional[str] = ""
+
+class RecommendRequest(BaseModel):
+    user_id: str
+    ocasion: Optional[str] = None
+    color: Optional[str] = None
+    top: int = 5
+    incluir_closet: bool = True
+    prendas_extra: Optional[List[PrendaExtra]] = []
+
+
+# --- ENDPOINT ACTUALIZADO ---
 @app.post("/recommend")
 async def recommend_outfits(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    user_id: Optional[str] = None,
-    ocasion: Optional[str] = None,
-    color: Optional[str] = None,
-    top: int = 5,
-    incluir_closet: bool = True,
-    prendas_extra: Optional[List[dict]] = None,
+    payload: RecommendRequest = None,  # ← AQUÍ ESTÁ LA CLAVE: recibimos el JSON como un objeto
 ):
     """Recomienda outfits basados en el closet del usuario y filtros."""
+    
+    # Si no se envió payload (por compatibilidad con query params antiguos), usar defaults
+    if payload is None:
+        payload = RecommendRequest(user_id="unknown")
+
     user_info = await verify_firebase_token(request, credentials)
     
-    if not user_id:
-        user_id = user_info.get("uid", "local_test_user")
+    # Usar el UID del token si no se proporcionó o no coincide (seguridad)
+    user_id = payload.user_id or user_info.get("uid", "local_test_user")
     
-    if top < 1 or top > 20:
+    if payload.top < 1 or payload.top > 20:
         raise HTTPException(status_code=400, detail="El parámetro 'top' debe estar entre 1 y 20")
     
     OCASIONES_VALIDAS = ["casual", "business_casual", "formal", "deportivo", "fiesta"]
-    if ocasion and ocasion not in OCASIONES_VALIDAS:
+    if payload.ocasion and payload.ocasion not in OCASIONES_VALIDAS:
         raise HTTPException(status_code=400, detail=f"Ocasion inválida. Valores: {OCASIONES_VALIDAS}")
     
     try:
-        logger.info(f"Generando recomendaciones para usuario {user_id}, ocasión: {ocasion}")
+        logger.info(f"Generando recomendaciones para usuario {user_id}, ocasión: {payload.ocasion}")
         prendas = []
         
-        if incluir_closet:
+        # 1. Cargar desde Cloud Storage si se solicita
+        if payload.incluir_closet:
             try:
                 prendas_closet = storage_manager.get_user_closet(user_id)
                 prendas.extend(prendas_closet)
             except Exception as e:
-                logger.warning(f"No se pudo cargar el closet (¿modo local?): {str(e)}")
+                logger.warning(f"No se pudo cargar el closet (¿modo local o sin permisos?): {str(e)}")
         
-        if prendas_extra:
-            for prenda in prendas_extra:
-                if "tipo" not in prenda or "color" not in prenda:
-                    continue
+        # 2. Agregar prendas extra enviadas por el frontend
+        if payload.prendas_extra:
+            for p in payload.prendas_extra:
                 prenda_completa = {
-                    "tipo": prenda["tipo"],
-                    "color": prenda["color"] if isinstance(prenda["color"], dict) else {"nombre": prenda["color"]},
-                    "patron": prenda.get("patron", "liso"),
-                    "mezclilla": prenda.get("mezclilla", False),
-                    "ocasiones": prenda.get("ocasiones", ["casual"]),
-                    "nombre": prenda.get("nombre", "Prenda"),
-                    "imagen_url": prenda.get("imagen_url", ""),
+                    "tipo": p.tipo,
+                    "color": p.color.dict() if hasattr(p.color, 'dict') else p.color,
+                    "patron": p.patron,
+                    "mezclilla": p.mezclilla,
+                    "ocasiones": p.ocasiones,
+                    "nombre": p.nombre,
+                    "imagen_url": p.imagen_url,
                 }
                 prendas.append(prenda_completa)
         
         if not prendas:
-            raise HTTPException(status_code=404, detail="No hay prendas disponibles.")
+            raise HTTPException(status_code=404, detail="No hay prendas disponibles. Agrega prendas a tu clóset o sube fotos.")
         
-        if color:
-            prendas = [p for p in prendas if p.get("color", {}).get("nombre", "").lower() == color.lower()]
+        # 3. Filtrar por color si se especificó
+        if payload.color:
+            prendas = [
+                p for p in prendas 
+                if p.get("color", {}).get("nombre", "").lower() == payload.color.lower()
+            ]
         
-        resultados = recomendar(prendas, ocasion=ocasion, top=top)
+        # 4. Generar recomendaciones
+        resultados = recomendar(prendas, ocasion=payload.ocasion, top=payload.top)
         
+        # 5. Formatear respuesta (manteniendo estructura completa)
         outfits = []
         for resultado in resultados:
             piezas_formateadas = []
             for pieza in resultado["piezas"]:
+                # Color: siempre como diccionario para consistencia
+                color_data = pieza.get("color", {})
+                if isinstance(color_data, dict):
+                    color_dict = {
+                        "nombre": color_data.get("nombre", "desconocido"),
+                        "tono": color_data.get("tono", 0),
+                        "saturacion": color_data.get("saturacion", 0.5),
+                        "brillo": color_data.get("brillo", 0.5),
+                        "neutro": color_data.get("neutro", False),
+                        "fuerte": color_data.get("fuerte", False),
+                    }
+                else:
+                    # Si por alguna razón viene como string, convertirlo
+                    color_dict = {"nombre": str(color_data)}
+                
                 pieza_fmt = {
                     "tipo": pieza.get("tipo", "desconocido"),
-                    "color": pieza.get("color", {}).get("nombre", "desconocido") if isinstance(pieza.get("color"), dict) else str(pieza.get("color", "desconocido")),
+                    "color": color_dict,  # ✅ Siempre diccionario
                     "nombre": pieza.get("nombre", "Prenda"),
-                    "imagen_url": pieza.get("imagen_url", ""),
+                    "imagen_url": pieza.get("imagen_url", ""),  # URL firmada de GCS
                 }
                 piezas_formateadas.append(pieza_fmt)
             
