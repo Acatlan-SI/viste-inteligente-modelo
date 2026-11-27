@@ -208,7 +208,7 @@ async def recommend_outfits(
 
     user_info = await verify_firebase_token(request, credentials)
     
-    user_id = payload.user_id or user_info.get("uid", "local_test_user")
+    user_id = user_info["uid"]
     
     if payload.top < 1 or payload.top > 20:
         raise HTTPException(status_code=400, detail="El parámetro 'top' debe estar entre 1 y 20")
@@ -244,13 +244,48 @@ async def recommend_outfits(
         if not prendas:
             raise HTTPException(status_code=404, detail="No hay prendas disponibles. Agrega prendas a tu clóset o sube fotos.")
         
+        prendas_normalizadas = []
+        for p in prendas:
+            color_data = p.get("color", {})
+            if isinstance(color_data, dict):
+                color_norm = {
+                    "nombre": str(color_data.get("nombre", "desconocido")),
+                    "tono": float(color_data.get("tono", 0.0)),
+                    "saturacion": float(color_data.get("saturacion", 0.5)),
+                    "brillo": float(color_data.get("brillo", 0.5)),
+                    "neutro": bool(color_data.get("neutro", False)),
+                    "fuerte": bool(color_data.get("fuerte", False)),
+                }
+            else:
+                # Fallback por si el color viene como string u otro tipo inesperado
+                color_norm = {
+                    "nombre": str(color_data),
+                    "tono": 0.0,
+                    "saturacion": 0.5,
+                    "brillo": 0.5,
+                    "neutro": False,
+                    "fuerte": False,
+                }
+            
+            prendas_normalizadas.append({
+                "tipo": str(p.get("tipo", "desconocido")),
+                "color": color_norm,
+                "patron": str(p.get("patron", "liso")),
+                "mezclilla": bool(p.get("mezclilla", False)),
+                "ocasiones": p.get("ocasiones", ["casual"]),
+                "nombre": str(p.get("nombre", "Prenda")),
+                "imagen_url": str(p.get("imagen_url", "")),
+            })
+        # --- FIN: Normalización defensiva ---
+        
         if payload.color:
-            prendas = [
-                p for p in prendas 
+            prendas_normalizadas = [
+                p for p in prendas_normalizadas 
                 if p.get("color", {}).get("nombre", "").lower() == payload.color.lower()
             ]
         
-        resultados = recomendar(prendas, ocasion=payload.ocasion, top=payload.top)
+        # Pasamos la lista normalizada a la función de reglas
+        resultados = recomendar(prendas_normalizadas, ocasion=payload.ocasion, top=payload.top)
         
         outfits = []
         for resultado in resultados:
